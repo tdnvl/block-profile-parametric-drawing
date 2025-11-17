@@ -135,7 +135,7 @@
 
       <div class="field">
         <label>
-          <span>Block fillet radius (mm)</span>
+          <span id="filletRadiusLabel">Block fillet radius (mm)</span>
           <input type="number" id="filletRadius" value="1.5" step="0.1" min="0">
         </label>
       </div>
@@ -172,6 +172,7 @@
 
     const showDimensionsInput = document.getElementById("showDimensions");
     const exportButton = document.getElementById("exportPng");
+    const filletRadiusLabel = document.getElementById("filletRadiusLabel");
 
     Object.values(inputs).forEach(input => {
       input.addEventListener("input", draw);
@@ -235,20 +236,20 @@
 
       const blockHeightPx = chanterTopY - blockTopY;
 
-      // Decide whether we are in "bullet dome" mode:
-      // if fillet radius is greater than half the block width (as requested)
-      const filletRadiusLimitMm = blockWidth / 2;
-      const usesDome = filletRadius > filletRadiusLimitMm;
-
-      // Effective fillet radius actually used for geometry and dimensions
-      const filletEffectiveMm = usesDome ? filletRadiusLimitMm : filletRadius;
-      let filletPx = filletEffectiveMm * scale;
+      let filletPx = filletRadius * scale;
 
       // Clamp fillet so it fits between chanter and block diameters
       if (filletPx > blockHeightPx) {
         filletPx = blockHeightPx;
       }
       if (filletPx < 0) filletPx = 0;
+
+      // Highlight fillet radius label if radius exceeds half the block width
+      if (filletRadius > blockWidth / 2) {
+        filletRadiusLabel.style.color = "red";
+      } else {
+        filletRadiusLabel.style.color = "";
+      }
 
       // Draw centerline (long-short dash pattern)
       ctx.save();
@@ -283,56 +284,33 @@
       ctx.setLineDash([]);
       ctx.beginPath();
 
-      if (usesDome && blockWidthPx > 0) {
-        // Bullet-shaped dome: vertical sides up to a shoulder, then a single dome arc
-        const domeRadiusPx = blockWidthPx / 2;
-        const shoulderY = blockTopY + domeRadiusPx; // where arc meets the sides
-
-        // Left side
+      // Regular flat-top block with corner fillets (fillets can overlap and form a pointed arch)
+      if (filletPx > 0) {
+        // Left side from centerline up to fillet start
         ctx.moveTo(blockLeftX, centerlineY);
-        ctx.lineTo(blockLeftX, shoulderY);
+        ctx.lineTo(blockLeftX, blockTopY + filletPx);
 
-        // Dome arc from left shoulder to right shoulder
-        ctx.arc(
-          centerX,
-          shoulderY,
-          domeRadiusPx,
-          Math.PI,    // start at left
-          0,          // end at right
-          false
-        );
+        // Left fillet arc (side to top)
+        const leftCx = blockLeftX + filletPx;
+        const leftCy = blockTopY + filletPx;
+        ctx.arc(leftCx, leftCy, filletPx, Math.PI, 1.5 * Math.PI, false);
+
+        // Top between fillets
+        ctx.lineTo(blockRightX - filletPx, blockTopY);
+
+        // Right fillet arc (top to side)
+        const rightCx = blockRightX - filletPx;
+        const rightCy = blockTopY + filletPx;
+        ctx.arc(rightCx, rightCy, filletPx, 1.5 * Math.PI, 0, false);
 
         // Right side down to centerline
         ctx.lineTo(blockRightX, centerlineY);
       } else {
-        // Regular flat-top block with corner fillets
-        if (filletPx > 0) {
-          // Left side from centerline up to fillet start
-          ctx.moveTo(blockLeftX, centerlineY);
-          ctx.lineTo(blockLeftX, blockTopY + filletPx);
-
-          // Left fillet arc (side to top)
-          const leftCx = blockLeftX + filletPx;
-          const leftCy = blockTopY + filletPx;
-          ctx.arc(leftCx, leftCy, filletPx, Math.PI, 1.5 * Math.PI, false);
-
-          // Top between fillets
-          ctx.lineTo(blockRightX - filletPx, blockTopY);
-
-          // Right fillet arc (top to side)
-          const rightCx = blockRightX - filletPx;
-          const rightCy = blockTopY + filletPx;
-          ctx.arc(rightCx, rightCy, filletPx, 1.5 * Math.PI, 0, false);
-
-          // Right side down to centerline
-          ctx.lineTo(blockRightX, centerlineY);
-        } else {
-          // Sharp corners if fillet is zero
-          ctx.moveTo(blockLeftX, centerlineY);
-          ctx.lineTo(blockLeftX, blockTopY);
-          ctx.lineTo(blockRightX, blockTopY);
-          ctx.lineTo(blockRightX, centerlineY);
-        }
+        // Sharp corners if fillet is zero
+        ctx.moveTo(blockLeftX, centerlineY);
+        ctx.lineTo(blockLeftX, blockTopY);
+        ctx.lineTo(blockRightX, blockTopY);
+        ctx.lineTo(blockRightX, centerlineY);
       }
 
       ctx.stroke();
@@ -346,7 +324,7 @@
           chanterDiameter,
           blockDiameter,
           blockWidth,
-          filletRadius: filletEffectiveMm,
+          filletRadius,
           blockLeftX,
           blockRightX,
           centerX
