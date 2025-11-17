@@ -284,29 +284,67 @@
       ctx.setLineDash([]);
       ctx.beginPath();
 
-      // Regular flat-top block with corner fillets (fillets can overlap and form a pointed arch)
       if (filletPx > 0) {
-        // Left side from centerline up to fillet start
-        ctx.moveTo(blockLeftX, centerlineY);
-        ctx.lineTo(blockLeftX, blockTopY + filletPx);
-
-        // Left fillet arc (side to top)
         const leftCx = blockLeftX + filletPx;
         const leftCy = blockTopY + filletPx;
-        ctx.arc(leftCx, leftCy, filletPx, Math.PI, 1.5 * Math.PI, false);
-
-        // Top between fillets
-        ctx.lineTo(blockRightX - filletPx, blockTopY);
-
-        // Right fillet arc (top to side)
         const rightCx = blockRightX - filletPx;
         const rightCy = blockTopY + filletPx;
-        ctx.arc(rightCx, rightCy, filletPx, 1.5 * Math.PI, 0, false);
 
-        // Right side down to centerline
-        ctx.lineTo(blockRightX, centerlineY);
+        ctx.moveTo(blockLeftX, centerlineY);
+
+        if (filletPx * 2 <= blockWidthPx) {
+          // Normal case: fillets do not collide, flat top between them
+          ctx.lineTo(blockLeftX, blockTopY + filletPx);
+
+          // Left fillet arc (side to top)
+          ctx.arc(leftCx, leftCy, filletPx, Math.PI, 1.5 * Math.PI, false);
+
+          // Top between fillets
+          ctx.lineTo(blockRightX - filletPx, blockTopY);
+
+          // Right fillet arc (top to side)
+          ctx.arc(rightCx, rightCy, filletPx, 1.5 * Math.PI, 0, false);
+
+          // Right side down to centerline
+          ctx.lineTo(blockRightX, centerlineY);
+        } else {
+          // Colliding fillets: trim at their intersection, no top line
+          const dx = rightCx - leftCx;
+          const D = Math.abs(dx);
+
+          if (D >= 2 * filletPx) {
+            // Degenerate fallback: treat as sharp top
+            ctx.lineTo(blockLeftX, blockTopY);
+            ctx.lineTo(blockRightX, blockTopY);
+            ctx.lineTo(blockRightX, centerlineY);
+          } else {
+            const halfD = D / 2;
+            const hInt = Math.sqrt(filletPx * filletPx - halfD * halfD);
+            const yc = leftCy; // same as rightCy
+            const xMid = (leftCx + rightCx) / 2;
+            const yInt = yc - hInt;
+
+            // angles at intersection for left and right circles
+            let alpha = Math.atan2(yInt - yc, xMid - leftCx);
+            let gamma = Math.atan2(yInt - yc, xMid - rightCx);
+            if (alpha < 0) alpha += 2 * Math.PI;
+            if (gamma < 0) gamma += 2 * Math.PI;
+
+            // Up left side to fillet start
+            ctx.lineTo(blockLeftX, blockTopY + filletPx);
+
+            // Left fillet arc from side to intersection
+            ctx.arc(leftCx, yc, filletPx, Math.PI, alpha, false);
+
+            // Right fillet arc from intersection to side
+            ctx.arc(rightCx, yc, filletPx, gamma, 0, false);
+
+            // Down right side
+            ctx.lineTo(blockRightX, centerlineY);
+          }
+        }
       } else {
-        // Sharp corners if fillet is zero
+        // No fillet: sharp rectangular block
         ctx.moveTo(blockLeftX, centerlineY);
         ctx.lineTo(blockLeftX, blockTopY);
         ctx.lineTo(blockRightX, blockTopY);
