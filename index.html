@@ -391,7 +391,7 @@
 
       // Margins on each side = widest block; inter-block gap = 60% of widest block
       const marginMm = maxBlockWidth;
-      const gapMm    = maxBlockWidth * 0.6;
+      const gapMm    = 0;
 
       const totalBlocksMm = blocks.reduce((s, b) => s + Math.max(b.blockWidth, 0.1), 0);
       const totalWidthMm  = totalBlocksMm + (blocks.length - 1) * gapMm + 2 * marginMm;
