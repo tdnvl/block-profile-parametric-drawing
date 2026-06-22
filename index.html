@@ -31,9 +31,9 @@
       margin: 0 0 1rem;
     }
 
-    .controls {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    .global-controls {
+      display: flex;
+      flex-wrap: wrap;
       gap: 0.75rem 1.5rem;
       margin-bottom: 1.25rem;
       align-items: flex-end;
@@ -90,7 +90,11 @@
       margin-top: 0.75rem;
       display: flex;
       gap: 0.75rem;
-      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .actions-spacer {
+      flex: 1;
     }
 
     button {
@@ -102,8 +106,100 @@
       cursor: pointer;
     }
 
-    button:hover {
+    button:hover:not(:disabled) {
       background: #e4e4e4;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Block table */
+    .table-wrapper {
+      margin-top: 1.25rem;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    thead th {
+      text-align: left;
+      font-weight: 600;
+      padding: 0.4rem 0.5rem;
+      border-bottom: 2px solid #ddd;
+      color: #444;
+      white-space: nowrap;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #eee;
+    }
+
+    tbody tr:hover {
+      background: #fafafa;
+    }
+
+    tbody tr.drag-over {
+      border-top: 2px solid #6b9adf;
+    }
+
+    tbody tr.dragging {
+      opacity: 0.35;
+    }
+
+    tbody td {
+      padding: 0.35rem 0.5rem;
+      vertical-align: middle;
+    }
+
+    .col-handle {
+      width: 28px;
+      text-align: center;
+    }
+
+    .col-num {
+      width: 28px;
+      text-align: center;
+      color: #999;
+      font-weight: 500;
+    }
+
+    .drag-handle {
+      cursor: grab;
+      color: #bbb;
+      font-size: 1.1rem;
+      user-select: none;
+    }
+
+    .drag-handle:active {
+      cursor: grabbing;
+    }
+
+    .block-input {
+      width: 90px;
+    }
+
+    .block-input.warn {
+      border-color: #e05;
+    }
+
+    .remove-btn {
+      padding: 0.2rem 0.45rem;
+      font-size: 0.8rem;
+      color: #aaa;
+      border-color: #e0e0e0;
+      background: #fff;
+    }
+
+    .remove-btn:hover:not(:disabled) {
+      background: #fff0f0;
+      border-color: #f88;
+      color: #c00;
     }
   </style>
 </head>
@@ -111,35 +207,13 @@
   <div class="app">
     <h1>Block Profile Parametric Drawing</h1>
 
-    <div class="controls">
+    <div class="global-controls">
       <div class="field">
         <label>
           <span>Chanter diameter (mm)</span>
           <input type="number" id="chanterDiameter" value="16" step="0.1" min="0.1">
         </label>
       </div>
-
-      <div class="field">
-        <label>
-          <span>Block outside diameter (mm)</span>
-          <input type="number" id="blockDiameter" value="32" step="0.1" min="0.1">
-        </label>
-      </div>
-
-      <div class="field">
-        <label>
-          <span>Block width (mm)</span>
-          <input type="number" id="blockWidth" value="15" step="0.1" min="0.1">
-        </label>
-      </div>
-
-      <div class="field">
-        <label>
-          <span id="filletRadiusLabel">Block fillet radius (mm)</span>
-          <input type="number" id="filletRadius" value="1.5" step="0.1" min="0">
-        </label>
-      </div>
-
       <div class="field inline">
         <label class="inline">
           <input type="checkbox" id="showDimensions" checked>
@@ -148,136 +222,272 @@
       </div>
     </div>
 
-    <p class="note">
-      Edit the values to update the side view. Drawing is not to any particular real-world scale.
-    </p>
+    <p class="note">Blocks are drawn left to right in list order. Drag rows to reorder.</p>
 
-    <canvas id="profileCanvas" width="1000" height="360"></canvas>
+    <canvas id="profileCanvas" width="1000" height="380"></canvas>
 
     <div class="actions">
+      <button id="addBlock">+ Add block</button>
+      <span class="actions-spacer"></span>
       <button id="exportPng">Export as transparent PNG</button>
+    </div>
+
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-handle"></th>
+            <th class="col-num">#</th>
+            <th>Outside Ø (mm)</th>
+            <th>Width (mm)</th>
+            <th>Fillet radius (mm)</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="blockTableBody"></tbody>
+      </table>
     </div>
   </div>
 
   <script>
-    const canvas = document.getElementById("profileCanvas");
-    const ctx = canvas.getContext("2d");
-
-    const inputs = {
-      chanterDiameter: document.getElementById("chanterDiameter"),
-      blockDiameter:   document.getElementById("blockDiameter"),
-      blockWidth:      document.getElementById("blockWidth"),
-      filletRadius:    document.getElementById("filletRadius")
-    };
-
+    const canvas  = document.getElementById("profileCanvas");
+    const ctx     = canvas.getContext("2d");
+    const chanterInput        = document.getElementById("chanterDiameter");
     const showDimensionsInput = document.getElementById("showDimensions");
-    const exportButton = document.getElementById("exportPng");
-    const filletRadiusLabel = document.getElementById("filletRadiusLabel");
+    const blockTableBody      = document.getElementById("blockTableBody");
 
-    Object.values(inputs).forEach(input => {
-      input.addEventListener("input", draw);
-    });
+    // ── State ─────────────────────────────────────────────────────────────────
 
+    let blocks = [
+      { id: 1, blockDiameter: 32, blockWidth: 15, filletRadius: 1.5 }
+    ];
+    let nextId = 2;
+    let dragSrcIndex = null;
+
+    // ── Bootstrap ─────────────────────────────────────────────────────────────
+
+    chanterInput.addEventListener("input", draw);
     showDimensionsInput.addEventListener("change", draw);
+    document.getElementById("addBlock").addEventListener("click", addBlock);
+    document.getElementById("exportPng").addEventListener("click", exportPng);
 
-    exportButton.addEventListener("click", () => {
-      const link = document.createElement("a");
-      link.download = "block-profile.png";
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    });
+    renderTable();
+    draw();
 
-    function getParams() {
-      const chanterDiameter = Math.max(parseFloat(inputs.chanterDiameter.value) || 0.1, 0.1);
-      const blockDiameter   = Math.max(parseFloat(inputs.blockDiameter.value)   || 0.1, 0.1);
-      const blockWidth      = Math.max(parseFloat(inputs.blockWidth.value)      || 0.1, 0.1);
-      const filletRadius    = Math.max(parseFloat(inputs.filletRadius.value)    || 0,   0);
+    // ── Block management ──────────────────────────────────────────────────────
 
-      return { chanterDiameter, blockDiameter, blockWidth, filletRadius };
+    function addBlock() {
+      const last = blocks[blocks.length - 1];
+      blocks.push({
+        id: nextId++,
+        blockDiameter: last ? last.blockDiameter : 32,
+        blockWidth:    last ? last.blockWidth    : 15,
+        filletRadius:  last ? last.filletRadius  : 1.5
+      });
+      renderTable();
+      draw();
     }
 
-    function draw() {
-      const { chanterDiameter, blockDiameter, blockWidth, filletRadius } = getParams();
+    function removeBlock(index) {
+      if (blocks.length <= 1) return;
+      blocks.splice(index, 1);
+      renderTable();
+      draw();
+    }
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    function updateBlock(index, key, rawVal) {
+      const val = key === "filletRadius"
+        ? Math.max(parseFloat(rawVal) || 0, 0)
+        : Math.max(parseFloat(rawVal) || 0.1, 0.1);
+      blocks[index][key] = val;
+      updateFilletWarning(index);
+      draw();
+    }
 
+    function updateFilletWarning(index) {
+      const rows  = blockTableBody.querySelectorAll("tr");
+      const input = rows[index] && rows[index].querySelector("[data-key='filletRadius']");
+      if (!input) return;
+      const b = blocks[index];
+      input.classList.toggle("warn", b.filletRadius > b.blockWidth / 2);
+    }
+
+    // ── Table rendering ───────────────────────────────────────────────────────
+
+    function renderTable() {
+      blockTableBody.innerHTML = "";
+      blocks.forEach((block, index) => {
+        const tr = document.createElement("tr");
+        tr.draggable = true;
+
+        tr.addEventListener("dragstart", e => {
+          dragSrcIndex = index;
+          e.dataTransfer.effectAllowed = "move";
+          // Defer the class so the drag image is captured before opacity drops
+          setTimeout(() => tr.classList.add("dragging"), 0);
+        });
+
+        tr.addEventListener("dragend", () => {
+          tr.classList.remove("dragging");
+          blockTableBody.querySelectorAll("tr").forEach(r => r.classList.remove("drag-over"));
+          dragSrcIndex = null;
+        });
+
+        tr.addEventListener("dragover", e => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          blockTableBody.querySelectorAll("tr").forEach(r => r.classList.remove("drag-over"));
+          tr.classList.add("drag-over");
+        });
+
+        tr.addEventListener("dragleave", e => {
+          if (!tr.contains(e.relatedTarget)) tr.classList.remove("drag-over");
+        });
+
+        tr.addEventListener("drop", e => {
+          e.preventDefault();
+          tr.classList.remove("drag-over");
+          if (dragSrcIndex === null || dragSrcIndex === index) return;
+          const [moved] = blocks.splice(dragSrcIndex, 1);
+          blocks.splice(index, 0, moved);
+          renderTable();
+          draw();
+        });
+
+        const warnClass = block.filletRadius > block.blockWidth / 2 ? " warn" : "";
+        tr.innerHTML = `
+          <td class="col-handle"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
+          <td class="col-num">${index + 1}</td>
+          <td><input type="number" class="block-input" value="${block.blockDiameter}" step="0.1" min="0.1" data-key="blockDiameter"></td>
+          <td><input type="number" class="block-input" value="${block.blockWidth}"    step="0.1" min="0.1" data-key="blockWidth"></td>
+          <td><input type="number" class="block-input${warnClass}" value="${block.filletRadius}" step="0.1" min="0" data-key="filletRadius"></td>
+          <td><button class="remove-btn" title="Remove block" ${blocks.length <= 1 ? "disabled" : ""}>✕</button></td>
+        `;
+
+        tr.querySelectorAll(".block-input").forEach(input => {
+          input.addEventListener("input", e => updateBlock(index, e.target.dataset.key, e.target.value));
+        });
+
+        tr.querySelector(".remove-btn").addEventListener("click", () => removeBlock(index));
+
+        blockTableBody.appendChild(tr);
+      });
+    }
+
+    // ── Layout computation ────────────────────────────────────────────────────
+
+    function computeLayout() {
       const w = canvas.width;
       const h = canvas.height;
 
-      // Centerline position and margins
-      const centerlineY = h * 0.7;
-
+      const chanterDiameter = Math.max(parseFloat(chanterInput.value) || 0.1, 0.1);
       const chanterRadiusMm = chanterDiameter / 2;
-      const blockRadiusMm   = blockDiameter / 2;
 
-      const extraLengthMm = blockWidth; // chanter length visible on each side
-      const totalWidthMm = blockWidth + 2 * extraLengthMm;
-      const maxRadiusMm = Math.max(chanterRadiusMm, blockRadiusMm);
+      const maxBlockRadiusMm = Math.max(
+        chanterRadiusMm,
+        ...blocks.map(b => Math.max(b.blockDiameter, 0.1) / 2)
+      );
+      const maxBlockWidth = Math.max(...blocks.map(b => Math.max(b.blockWidth, 0.1)));
 
-      const scaleX = (w * 0.9) / totalWidthMm;
-      const scaleY = (h * 0.5) / maxRadiusMm;
-      const scale = Math.min(scaleX, scaleY);
+      // Margins on each side = widest block; inter-block gap = 60% of widest block
+      const marginMm = maxBlockWidth;
+      const gapMm    = maxBlockWidth * 0.6;
+
+      const totalBlocksMm = blocks.reduce((s, b) => s + Math.max(b.blockWidth, 0.1), 0);
+      const totalWidthMm  = totalBlocksMm + (blocks.length - 1) * gapMm + 2 * marginMm;
+
+      // Centerline sits at 72% down; top 50% of canvas height is usable for radius
+      const centerlineY = h * 0.72;
+      const scaleX = (w * 0.88) / totalWidthMm;
+      const scaleY = (h * 0.50) / maxBlockRadiusMm;
+      const scale  = Math.min(scaleX, scaleY);
 
       const totalWidthPx = totalWidthMm * scale;
-
-      const centerX = w / 2;
-      const leftMarginX = centerX - totalWidthPx / 2;
-      const rightMarginX = centerX + totalWidthPx / 2;
+      const leftEdgeX    = (w - totalWidthPx) / 2;
+      const rightEdgeX   = leftEdgeX + totalWidthPx;
 
       const chanterRadiusPx = chanterRadiusMm * scale;
-      const blockRadiusPx   = blockRadiusMm   * scale;
-      const blockWidthPx    = blockWidth      * scale;
+      const chanterTopY     = centerlineY - chanterRadiusPx;
 
-      const chanterTopY = centerlineY - chanterRadiusPx;
-      const blockTopY   = centerlineY - blockRadiusPx;
+      // Pixel position of each block
+      let offsetMm = marginMm;
+      const blockPositions = blocks.map(block => {
+        const blockDiameter = Math.max(block.blockDiameter, 0.1);
+        const blockWidth    = Math.max(block.blockWidth, 0.1);
+        const filletRadius  = Math.max(block.filletRadius, 0);
 
-      const blockLeftX  = centerX - blockWidthPx / 2;
-      const blockRightX = centerX + blockWidthPx / 2;
+        const blockWidthPx  = blockWidth * scale;
+        const blockLeftX    = leftEdgeX + offsetMm * scale;
+        const blockRightX   = blockLeftX + blockWidthPx;
+        const blockRadiusPx = (blockDiameter / 2) * scale;
+        const blockTopY     = centerlineY - blockRadiusPx;
 
-      const blockHeightPx = chanterTopY - blockTopY;
+        offsetMm += blockWidth + gapMm;
 
-      let filletPx = filletRadius * scale;
+        return { blockLeftX, blockRightX, blockWidthPx, blockTopY, blockRadiusPx,
+                 blockDiameter, blockWidth, filletRadius };
+      });
 
-      // Clamp fillet so it fits between chanter and block diameters
-      if (filletPx > blockHeightPx) {
-        filletPx = blockHeightPx;
-      }
-      if (filletPx < 0) filletPx = 0;
+      return {
+        w, h, scale,
+        leftEdgeX, rightEdgeX,
+        centerlineY, chanterTopY,
+        chanterDiameter, chanterRadiusMm, chanterRadiusPx,
+        blockPositions
+      };
+    }
 
-      // Highlight fillet radius label if radius exceeds half the block width
-      if (filletRadius > blockWidth / 2) {
-        filletRadiusLabel.style.color = "red";
-      } else {
-        filletRadiusLabel.style.color = "";
-      }
+    // ── Drawing ───────────────────────────────────────────────────────────────
 
-      // Draw centerline (long-short dash pattern)
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const layout = computeLayout();
+      const { leftEdgeX, rightEdgeX, centerlineY, chanterTopY, blockPositions, scale } = layout;
+
+      // Centerline (long-short dash)
       ctx.save();
       ctx.strokeStyle = "#777";
       ctx.lineWidth = 1;
-      ctx.setLineDash([18, 6, 6, 6]); // long, gap, short, gap
+      ctx.setLineDash([18, 6, 6, 6]);
       ctx.beginPath();
-      ctx.moveTo(leftMarginX, centerlineY);
-      ctx.lineTo(rightMarginX, centerlineY);
+      ctx.moveTo(leftEdgeX, centerlineY);
+      ctx.lineTo(rightEdgeX, centerlineY);
       ctx.stroke();
       ctx.restore();
 
-      // Draw chanter outside diameter (top line) broken around the block
+      // Chanter top line, broken at each block
       ctx.save();
       ctx.strokeStyle = "#555";
       ctx.lineWidth = 2;
       ctx.setLineDash([]);
       ctx.beginPath();
-      // left part
-      ctx.moveTo(leftMarginX, chanterTopY);
-      ctx.lineTo(blockLeftX, chanterTopY);
-      // right part
-      ctx.moveTo(blockRightX, chanterTopY);
-      ctx.lineTo(rightMarginX, chanterTopY);
+      let x = leftEdgeX;
+      blockPositions.forEach(pos => {
+        ctx.moveTo(x, chanterTopY);
+        ctx.lineTo(pos.blockLeftX, chanterTopY);
+        x = pos.blockRightX;
+      });
+      ctx.moveTo(x, chanterTopY);
+      ctx.lineTo(rightEdgeX, chanterTopY);
       ctx.stroke();
       ctx.restore();
 
-      // Draw block outer profile (sides extend down to centerline)
+      // Block profiles
+      blockPositions.forEach(pos => drawBlockProfile(pos, centerlineY, chanterTopY, scale));
+
+      // Dimensions
+      if (showDimensionsInput.checked) drawDimensions(layout);
+    }
+
+    function drawBlockProfile(pos, centerlineY, chanterTopY, scale) {
+      const { blockLeftX, blockRightX, blockWidthPx, blockTopY, filletRadius } = pos;
+
+      // Clamp fillet: can't exceed the radial rise above the chanter
+      let filletPx = filletRadius * scale;
+      const blockHeightPx = chanterTopY - blockTopY;
+      if (filletPx > blockHeightPx) filletPx = blockHeightPx;
+      if (filletPx < 0) filletPx = 0;
+
       ctx.save();
       ctx.strokeStyle = "#555";
       ctx.lineWidth = 2;
@@ -285,66 +495,48 @@
       ctx.beginPath();
 
       if (filletPx > 0) {
-        const leftCx = blockLeftX + filletPx;
-        const leftCy = blockTopY + filletPx;
+        const leftCx  = blockLeftX  + filletPx;
+        const leftCy  = blockTopY   + filletPx;
         const rightCx = blockRightX - filletPx;
-        const rightCy = blockTopY + filletPx;
+        const rightCy = blockTopY   + filletPx;
 
         ctx.moveTo(blockLeftX, centerlineY);
 
         if (filletPx * 2 <= blockWidthPx) {
-          // Normal case: fillets do not collide, flat top between them
+          // Normal: flat top between the two fillets
           ctx.lineTo(blockLeftX, blockTopY + filletPx);
-
-          // Left fillet arc (side to top)
           ctx.arc(leftCx, leftCy, filletPx, Math.PI, 1.5 * Math.PI, false);
-
-          // Top between fillets
           ctx.lineTo(blockRightX - filletPx, blockTopY);
-
-          // Right fillet arc (top to side)
           ctx.arc(rightCx, rightCy, filletPx, 1.5 * Math.PI, 0, false);
-
-          // Right side down to centerline
           ctx.lineTo(blockRightX, centerlineY);
         } else {
-          // Colliding fillets: trim at their intersection, no top line
-          const dx = rightCx - leftCx;
-          const D = Math.abs(dx);
+          // Colliding fillets: find intersection and trim
+          const D = Math.abs(rightCx - leftCx);
 
           if (D >= 2 * filletPx) {
-            // Degenerate fallback: treat as sharp top
+            // Degenerate fallback
             ctx.lineTo(blockLeftX, blockTopY);
             ctx.lineTo(blockRightX, blockTopY);
             ctx.lineTo(blockRightX, centerlineY);
           } else {
             const halfD = D / 2;
-            const hInt = Math.sqrt(filletPx * filletPx - halfD * halfD);
-            const yc = leftCy; // same as rightCy
-            const xMid = (leftCx + rightCx) / 2;
-            const yInt = yc - hInt;
+            const hInt  = Math.sqrt(filletPx * filletPx - halfD * halfD);
+            const xMid  = (leftCx + rightCx) / 2;
+            const yInt  = leftCy - hInt;
 
-            // angles at intersection for left and right circles
-            let alpha = Math.atan2(yInt - yc, xMid - leftCx);
-            let gamma = Math.atan2(yInt - yc, xMid - rightCx);
+            let alpha = Math.atan2(yInt - leftCy,  xMid - leftCx);
+            let gamma = Math.atan2(yInt - rightCy, xMid - rightCx);
             if (alpha < 0) alpha += 2 * Math.PI;
             if (gamma < 0) gamma += 2 * Math.PI;
 
-            // Up left side to fillet start
             ctx.lineTo(blockLeftX, blockTopY + filletPx);
-
-            // Left fillet arc from side to intersection
-            ctx.arc(leftCx, yc, filletPx, Math.PI, alpha, false);
-
-            // Right fillet arc from intersection to side
-            ctx.arc(rightCx, yc, filletPx, gamma, 0, false);
-
-            // Down right side
+            ctx.arc(leftCx,  leftCy,  filletPx, Math.PI, alpha, false);
+            ctx.arc(rightCx, rightCy, filletPx, gamma,   0,     false);
             ctx.lineTo(blockRightX, centerlineY);
           }
         }
       } else {
-        // No fillet: sharp rectangular block
+        // Sharp rectangular block
         ctx.moveTo(blockLeftX, centerlineY);
         ctx.lineTo(blockLeftX, blockTopY);
         ctx.lineTo(blockRightX, blockTopY);
@@ -353,168 +545,111 @@
 
       ctx.stroke();
       ctx.restore();
-
-      if (showDimensionsInput.checked) {
-        drawDimensions({
-          centerlineY,
-          chanterTopY,
-          blockTopY,
-          chanterDiameter,
-          blockDiameter,
-          blockWidth,
-          filletRadius,
-          blockLeftX,
-          blockRightX,
-          centerX
-        });
-      }
     }
 
-    function drawDimensions(data) {
-      const {
-        centerlineY,
-        chanterTopY,
-        blockTopY,
-        chanterDiameter,
-        blockDiameter,
-        blockWidth,
-        filletRadius,
-        blockLeftX,
-        blockRightX,
-        centerX
-      } = data;
+    // ── Dimension annotations ─────────────────────────────────────────────────
+
+    function drawDimensions(layout) {
+      const { centerlineY, chanterTopY, chanterDiameter, blockPositions, scale, leftEdgeX } = layout;
 
       ctx.save();
       ctx.strokeStyle = "#999";
-      ctx.fillStyle = "#555";
-      ctx.lineWidth = 1;
-      ctx.font = "12px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      ctx.fillStyle   = "#555";
+      ctx.lineWidth   = 1;
+      ctx.font        = "12px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
-      const head = 6;
+      const HEAD = 6;
 
-      function verticalDim(x, y1, y2, label) {
+      function vertDim(x, y1, y2, label) {
         ctx.beginPath();
-        ctx.moveTo(x, y1);
-        ctx.lineTo(x, y2);
+        ctx.moveTo(x, y1); ctx.lineTo(x, y2);
         ctx.stroke();
-
-        // Arrow at top
+        // arrows
         ctx.beginPath();
-        ctx.moveTo(x, y1);
-        ctx.lineTo(x - head, y1 + head);
-        ctx.moveTo(x, y1);
-        ctx.lineTo(x + head, y1 + head);
+        ctx.moveTo(x, y1); ctx.lineTo(x - HEAD, y1 + HEAD);
+        ctx.moveTo(x, y1); ctx.lineTo(x + HEAD, y1 + HEAD);
+        ctx.moveTo(x, y2); ctx.lineTo(x - HEAD, y2 - HEAD);
+        ctx.moveTo(x, y2); ctx.lineTo(x + HEAD, y2 - HEAD);
         ctx.stroke();
-
-        // Arrow at bottom
-        ctx.beginPath();
-        ctx.moveTo(x, y2);
-        ctx.lineTo(x - head, y2 - head);
-        ctx.moveTo(x, y2);
-        ctx.lineTo(x + head, y2 - head);
-        ctx.stroke();
-
-        ctx.textAlign = "center";
+        ctx.textAlign    = "center";
         ctx.textBaseline = "top";
-        const textY = y2 + 10;
-        ctx.fillText(label, x, textY);
+        ctx.fillText(label, x, y2 + 8);
       }
 
-      function horizontalDim(x1, x2, y, label) {
+      function horizDim(x1, x2, y, label) {
         ctx.beginPath();
-        ctx.moveTo(x1, y);
-        ctx.lineTo(x2, y);
+        ctx.moveTo(x1, y); ctx.lineTo(x2, y);
         ctx.stroke();
-
-        // Left arrow
+        // arrows
         ctx.beginPath();
-        ctx.moveTo(x1, y);
-        ctx.lineTo(x1 + head, y - head);
-        ctx.moveTo(x1, y);
-        ctx.lineTo(x1 + head, y + head);
+        ctx.moveTo(x1, y); ctx.lineTo(x1 + HEAD, y - HEAD);
+        ctx.moveTo(x1, y); ctx.lineTo(x1 + HEAD, y + HEAD);
+        ctx.moveTo(x2, y); ctx.lineTo(x2 - HEAD, y - HEAD);
+        ctx.moveTo(x2, y); ctx.lineTo(x2 - HEAD, y + HEAD);
         ctx.stroke();
-
-        // Right arrow
-        ctx.beginPath();
-        ctx.moveTo(x2, y);
-        ctx.lineTo(x2 - head, y - head);
-        ctx.moveTo(x2, y);
-        ctx.lineTo(x2 - head, y + head);
-        ctx.stroke();
-
-        ctx.textAlign = "center";
+        ctx.textAlign    = "center";
         ctx.textBaseline = "bottom";
         ctx.fillText(label, (x1 + x2) / 2, y - 6);
       }
 
-      // Chanter diameter on the left
-      const chanterDimX = centerX - (blockRightX - blockLeftX);
-      verticalDim(
-        chanterDimX,
-        chanterTopY,
-        centerlineY,
-        `Chanter Ø ${chanterDiameter.toFixed(1)} mm`
-      );
+      // Chanter OD — once, centered in the left margin
+      const firstPos  = blockPositions[0];
+      const chanterDimX = (leftEdgeX + firstPos.blockLeftX) / 2;
+      vertDim(chanterDimX, chanterTopY, centerlineY, `Chanter Ø ${chanterDiameter.toFixed(1)} mm`);
 
-      // Block outside diameter on the right
-      const blockDimX = centerX + (blockRightX - blockLeftX);
-      verticalDim(
-        blockDimX,
-        blockTopY,
-        centerlineY,
-        `Block Ø ${blockDiameter.toFixed(1)} mm`
-      );
+      blockPositions.forEach((pos, i) => {
+        const { blockLeftX, blockRightX, blockTopY, blockDiameter, blockWidth, filletRadius } = pos;
+        const nextLeft = i < blockPositions.length - 1 ? blockPositions[i + 1].blockLeftX : Infinity;
 
-      // Block width above the block
-      const widthDimY = blockTopY - 30;
-      horizontalDim(
-        blockLeftX,
-        blockRightX,
-        widthDimY,
-        `Block width ${blockWidth.toFixed(1)} mm`
-      );
+        // Block width — above the block
+        const widthDimY = blockTopY - 30;
+        horizDim(blockLeftX, blockRightX, widthDimY, `${blockWidth.toFixed(1)} mm`);
 
-      // Fillet radius with leader line near top-right corner
-      if (filletRadius > 0) {
-        const filletPointX = blockRightX;
-        const filletPointY = blockTopY + 10; // approximate leader anchor
-        const leaderEndX = filletPointX + 70;
-        const leaderEndY = blockTopY - 25;
+        // Block OD — to the right, only if there's room before the next block
+        const odX = blockRightX + 28;
+        if (odX + 50 < nextLeft) {
+          vertDim(odX, blockTopY, centerlineY, `Ø ${blockDiameter.toFixed(1)} mm`);
+        }
 
-        ctx.beginPath();
-        ctx.moveTo(filletPointX, filletPointY);
-        ctx.lineTo(leaderEndX, leaderEndY);
-        ctx.stroke();
+        // Fillet leader — only if there's room
+        if (filletRadius > 0) {
+          const leaderEndX = blockRightX + 55;
+          if (leaderEndX + 60 < nextLeft) {
+            const leaderStartX = blockRightX;
+            const leaderStartY = blockTopY + Math.min(filletRadius * scale + 4, 18);
+            const leaderEndY   = blockTopY - 22;
 
-        // Small arrow at end of leader
-        const angle = Math.atan2(leaderEndY - filletPointY, leaderEndX - filletPointX);
-        const head = 6;
-        ctx.beginPath();
-        ctx.moveTo(leaderEndX, leaderEndY);
-        ctx.lineTo(
-          leaderEndX - head * Math.cos(angle - Math.PI / 6),
-          leaderEndY - head * Math.sin(angle - Math.PI / 6)
-        );
-        ctx.moveTo(leaderEndX, leaderEndY);
-        ctx.lineTo(
-          leaderEndX - head * Math.cos(angle + Math.PI / 6),
-          leaderEndY - head * Math.sin(angle + Math.PI / 6)
-        );
-        ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(leaderStartX, leaderStartY);
+            ctx.lineTo(leaderEndX, leaderEndY);
+            ctx.stroke();
 
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillText(
-          `Fillet radius R ${filletRadius.toFixed(1)} mm`,
-          leaderEndX + 4,
-          leaderEndY
-        );
-      }
+            const angle = Math.atan2(leaderEndY - leaderStartY, leaderEndX - leaderStartX);
+            ctx.beginPath();
+            ctx.moveTo(leaderEndX, leaderEndY);
+            ctx.lineTo(leaderEndX - HEAD * Math.cos(angle - Math.PI / 6), leaderEndY - HEAD * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(leaderEndX, leaderEndY);
+            ctx.lineTo(leaderEndX - HEAD * Math.cos(angle + Math.PI / 6), leaderEndY - HEAD * Math.sin(angle + Math.PI / 6));
+            ctx.stroke();
+
+            ctx.textAlign    = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(`R ${filletRadius.toFixed(1)} mm`, leaderEndX + 4, leaderEndY);
+          }
+        }
+      });
 
       ctx.restore();
     }
 
-    draw();
+    // ── Export ────────────────────────────────────────────────────────────────
+
+    function exportPng() {
+      const link = document.createElement("a");
+      link.download = "block-profile.png";
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    }
   </script>
 </body>
 </html>
